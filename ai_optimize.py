@@ -7,6 +7,11 @@ from __future__ import annotations
 import argparse
 import os
 import pandas as pd
+try:
+    from dotenv import load_dotenv  # type: ignore
+except Exception:  # pragma: no cover
+    def load_dotenv():
+        return False
 from backtesting import Backtest
 from src.strategy.divergent_bar import DivergentBar
 from src.strategy.strategy_ai import (
@@ -30,6 +35,9 @@ def main():
 
     if not os.path.exists(args.data):
         raise SystemExit(f"Data file not found: {args.data}")
+
+    # Load environment variables from .env if present
+    load_dotenv()
 
     df = pd.read_csv(args.data, parse_dates=True, index_col='Date')
     bt = Backtest(df, DivergentBar, cash=args.cash, commission=args.commission, finalize_trades=True)

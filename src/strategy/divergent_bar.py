@@ -82,11 +82,27 @@ class DivergentBar(TrailingStrategy):
         no_cross = (
             (high < min_alligator) | (low > max_alligator)
         )
-        bullish = upper_half & (ao < ao.shift(1)) & local_min & (open_ < close) & no_cross
-        bearish = lower_half & (ao > ao.shift(1)) & local_max & (open_ > close) & no_cross
+        ao_down = ao < ao.shift(1)
+        ao_up = ao > ao.shift(1)
+        bullish = upper_half & ao_down & local_min & (open_ < close) & no_cross
+        bearish = lower_half & ao_up & local_max & (open_ > close) & no_cross
         result = pd.Series(0, index=close.index)
         result[bullish] = 1
         result[bearish] = -1
+        # Store condition matrix for analysis (used by LLM context builder)
+        try:
+            self._cond_matrix = pd.DataFrame({
+                'upper_half': upper_half.astype(int),
+                'lower_half': lower_half.astype(int),
+                'local_min': local_min.astype(int),
+                'local_max': local_max.astype(int),
+                'ao_down': ao_down.astype(int),
+                'ao_up': ao_up.astype(int),
+                'no_cross': no_cross.astype(int),
+                'signal': result
+            })
+        except Exception:
+            pass
         return result.values
 
     def place_divergent_order(self, direction):

@@ -11,3 +11,6 @@ input_dir/
 
 # Ignore generated HTML reports
 *.html
+
+# Environment variables
+.env
