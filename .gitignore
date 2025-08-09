@@ -8,3 +8,6 @@ results/
 input_dir/
 # Ignore virtual environment
 .venv/
+
+# Ignore generated HTML reports
+*.html
