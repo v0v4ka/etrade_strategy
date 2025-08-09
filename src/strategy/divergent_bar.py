@@ -82,8 +82,8 @@ class DivergentBar(TrailingStrategy):
         no_cross = (
             (high < min_alligator) | (low > max_alligator)
         )
-        bullish = upper_half & (low < min_alligator) & (ao < ao.shift(1)) & local_min & (open_ < close) & no_cross
-        bearish = lower_half & (high > max_alligator) & (ao > ao.shift(1)) & local_max & (open_ > close) & no_cross
+        bullish = upper_half & (ao < ao.shift(1)) & local_min & (open_ < close) & no_cross
+        bearish = lower_half & (ao > ao.shift(1)) & local_max & (open_ > close) & no_cross
         result = pd.Series(0, index=close.index)
         result[bullish] = 1
         result[bearish] = -1
@@ -95,24 +95,26 @@ class DivergentBar(TrailingStrategy):
         high = self.data.High[-1]
         low = self.data.Low[-1]
         if direction > 0:
-            limit = high
+            stop = high
             sl = low - (high - low)
-            self.buy(stop=limit, sl=sl)
-            self.cancel_price = high
-        elif direction < 0:
-            limit = low
-            sl = high + (high - low)
-            self.sell(stop=limit, sl=sl)
+            self.buy(stop=stop, sl=sl)
             self.cancel_price = low
+        elif direction < 0:
+            stop = low
+            sl = high + (high - low)
+            self.sell(stop=stop, sl=sl)
+            self.cancel_price = high
 
-    def update_structural_sl(self, n: int = 5, buffer: float = 0.0):
+    def update_profit_trailing_sl(self, n: int = 5, buffer: float = 0.0):
         """
-        Update structural stop-loss for open trades:
-        - Long: SL = min(low over last n bars) - buffer (only move up)
-        - Short: SL = max(high over last n bars) + buffer (only move down)
-        Parameters:
-            n      : lookback bars (uses fewer if not enough history yet)
-            buffer : extra distance added beyond structure (positive number)
+        Move stop-loss only when the structural level is already in PROFIT zone.
+        Long:
+            structural = max(low over last n bars) - buffer
+            Apply only if structural > entry_price (locks profit)
+        Short:
+            structural = min(high over last n bars) + buffer
+            Apply only if structural < entry_price
+        Stops only tighten (never loosen).
         """
         if self.position.size == 0:
             return
@@ -122,50 +124,53 @@ class DivergentBar(TrailingStrategy):
         struct_long_sl = lows.max() - buffer
         struct_short_sl = highs.min() + buffer
 
-        # Adjust per trade (supports multiple partial trades if any)
         for trade in self.trades:
             if trade.is_long:
-                # Raise stop only (never loosen)
-                if trade.sl is None or struct_long_sl > trade.sl:
-                    trade.sl = struct_long_sl
+                # Require structural level in profit (above entry)
+                if struct_long_sl > trade.entry_price:
+                    if trade.sl is None or struct_long_sl > trade.sl:
+                        trade.sl = struct_long_sl
             elif trade.is_short:
-                # Lower stop only (never loosen)
-                if trade.sl is None or struct_short_sl < trade.sl:
-                    trade.sl = struct_short_sl
+                # Require structural level in profit (below entry)
+                if struct_short_sl < trade.entry_price:
+                    if trade.sl is None or struct_short_sl < trade.sl:
+                        trade.sl = struct_short_sl
+
 
     def next(self):
-        # --- Trade logic for single order, every bar, only fully executed orders ---
+        # --- Main per-bar logic ---
         super().next()
-        # If we have a position, manage or reverse
+        signal = self.divergent[-1]
+
+        # Manage existing position (reversal or trail)
         if self.position.size != 0:
-            signal = self.divergent[-1]
-            opposite_signal = (signal > 0 and self.position.is_short) or (signal < 0 and self.position.is_long)
-            if opposite_signal and self.position.pl > 0:
-                self.position.close()  # allow reversal below
+            opposite = (signal > 0 and self.position.is_short) or (signal < 0 and self.position.is_long)
+            if signal != 0 and opposite:
+                # Reverse immediately
+                self.position.close()
+                self.place_divergent_order(signal)
             else:
-            # Manage existing position (optional trailing stop only if profitable)
-                if self.position.pl > 0 :
-                    self.update_structural_sl(n=3)
+                # Trail only if profitable
+                if self.position.pl > 0:
+                    self.update_profit_trailing_sl(n=3)
             return
 
-        # Cancel all pending orders if new divergent bar found (regardless of direction)
-        if self.divergent[-1] != 0:
-            for order in self.orders:
-                order.cancel()
-        
-        # Cancel pending orders if stop loss would have been hit by current bar
-        for order in self.orders:
-            if order.is_long and self.cancel_price >= self.data.Low[-1]:
-                order.cancel()
-            elif order.is_short and self.cancel_price <= self.data.High[-1]:
-                order.cancel()
-        # If no open position, place new order on divergent bar
-        if self.divergent[-1] != 0 and self.position.size == 0:
-            self.place_divergent_order(self.divergent[-1])
-        # If open position in opposite direction, close and open new order
-        if self.divergent[-1] > 0 and self.position.is_short:
-            self.position.close()
-            self.place_divergent_order(self.divergent[-1])
-        elif self.divergent[-1] < 0 and self.position.is_long:
-            self.position.close()
-            self.place_divergent_order(self.divergent[-1])
+        # Cancel pending orders if current bar invalidates prior setup relative to cancel_price
+        # (restored logic from previous version)
+        if self.cancel_price is not None and self.orders:
+            for order in list(self.orders):
+                if order.is_long and self.cancel_price >= self.data.Low[-1]:
+                    order.cancel()
+                elif order.is_short and self.cancel_price <= self.data.High[-1]:
+                    order.cancel()
+
+
+        # Flat: handle new signal
+        if signal == 0:
+            return
+        # Cancel any stale pending orders before placing fresh one
+        if self.orders:
+            for o in list(self.orders):
+                o.cancel()
+
+        self.place_divergent_order(signal)
