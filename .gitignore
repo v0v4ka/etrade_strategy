@@ -1,0 +1,10 @@
+# Ignore all CSV files
+*.csv
+# Ignore Python cache files and folders
+__pycache__/
+*.pyc
+# Ignore results and input directories
+results/
+input_dir/
+# Ignore virtual environment
+.venv/

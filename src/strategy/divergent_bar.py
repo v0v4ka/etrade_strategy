@@ -1,4 +1,3 @@
-
 import pandas as pd
 from backtesting import Strategy
 from backtesting.lib import crossover
@@ -88,10 +87,47 @@ class DivergentBar(Strategy):
         result[bearish] = -1
         return result.values
 
+    def place_divergent_order(self, direction):
+        """
+        Places a limit order with stop loss for the given direction.
+        direction: 1 for bullish (buy), -1 for bearish (sell)
+        """
+        high = self.data.High[-1]
+        low = self.data.Low[-1]
+        if direction > 0:
+            stop = high
+            stop_loss = low - (high - low)
+            self.buy(stop=stop, sl=stop_loss)
+        elif direction < 0:
+            stop = low
+            stop_loss = high + (high - low)
+            self.sell(stop=stop, sl=stop_loss)
+
     def next(self):
-        if self.ao > 0:
-            self.position.close()  # Close any existing position
-            self.buy()
-        elif self.ao < 0:
-            self.position.close()  # Close any existing position
-            self.sell()
+        # --- Trade logic for single order, every bar, only fully executed orders ---
+        
+        # don't place new orders if there are open ones
+        if self.position:
+            return
+        
+        # Cancel all pending orders if new divergent bar found (regardless of position)
+        if self.divergent[-1] != 0:
+            for order in self.orders:
+                order.cancel()
+        
+        # Cancel pending orders if stop loss would have been hit by current bar
+        for order in self.orders:
+            if order.is_long and order.sl is not None and order.sl >= self.data.Low[0]:
+                order.cancel()
+            elif order.is_short and order.sl is not None and order.sl <= self.data.High[0]:
+                order.cancel()
+        # If no open position, place new order on divergent bar
+        if self.divergent[-1] != 0 and self.position.size == 0:
+            self.place_divergent_order(self.divergent[-1])
+        # If open position in opposite direction, close and open new order
+        if self.divergent[-1] > 0 and self.position.is_short:
+            self.position.close()
+            self.place_divergent_order(self.divergent[-1])
+        elif self.divergent[-1] < 0 and self.position.is_long:
+            self.position.close()
+            self.place_divergent_order(self.divergent[-1])

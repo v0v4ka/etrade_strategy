@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: backtest DivergentBar",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/backtest.py",
+      "args": [
+        "../sympols/qqq360x.csv"
+      ],
+      "console": "integratedTerminal"
+    }
+  ]
+}
